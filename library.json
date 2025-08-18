@@ -1,0 +1,8 @@
+{
+  "name": "ED_WIFI",
+  "description":"Wifi library supporting multiple credentials, AP mode reconfiguration and interfering AP network monitoring",
+  "version": "1.0.0",
+  "build": {
+    "srcFilter": "+<*>"
+  }
+}

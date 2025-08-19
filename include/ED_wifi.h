@@ -169,7 +169,7 @@ namespace ED_wifi
             }; // used to specify the CODEC operation when joining or splitting data pairs (strings) in/from a singly codec string
 
         public:
-            static constexpr StringLiteral NVS_AREA_NAME = "Config_WiFi";
+            static constexpr StringLiteral NVS_AREA_NAME =make_literal("Config_WiFi") ;
             /**
              * @brief removes a given SSID from the registered and tracked SSID
              * @param ssid
@@ -301,7 +301,7 @@ namespace ED_wifi
         static inline MacAddress                  station_mac;    // the MAC of the device
         // static char _SSID[2][ED_MAX_SSID_PWD_SIZE]; // instance value as we suppose there might be two station configurations, 4G and 5G to handle
         // static char _PWD[2][ED_MAX_SSID_PWD_SIZE];
-        static const uint8_t ReconnectDelay_ms = 2000; // dealy before the next wifi reconnection session is launched
+        static const uint16_t ReconnectDelay_ms = 2000; // dealy before the next wifi reconnection session is launched
         /**
          * @brief initializes MAC and std station ID for wifi operations
          */

@@ -356,6 +356,7 @@ int WiFiService::APCredential::compare_rssi_desc(const void *a, const void *b) {
 }
 
 void WiFiService::scan_wifi_networks() {
+  ESP_LOGI(TAG,"in scan_wifi_networks");
   wifi_scan_config_t scan_config = {
       .ssid = NULL,        // Scan all SSIDs
       .bssid = NULL,       // Scan all BSSIDs
@@ -370,7 +371,7 @@ void WiFiService::scan_wifi_networks() {
   };
   ESP_LOGI(TAG, "trying now start scan:++++++++++++++++++++++");
   ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true)); // true = blocking
-  uint16_t number = 0xFFFFFFFF; //all channels
+  uint16_t number = 0; //all channels
   ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&number));
 
   wifi_ap_record_t ap_records[number];

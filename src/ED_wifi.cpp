@@ -152,7 +152,7 @@ void WiFiService::APCredentialManager::loadDefaultAPs() {
   // rawCredential is used to load at startup the SIID and PWD defined in the
   // Secrets.h
   count = 0;
-  static const char *rawCredentials[][3] = {WIFI_CREDENTIALS};
+  static const char *rawCredentials[][3] = {ED_WIFI_CREDENTIALS};
   static const size_t rawCredentialCount =
       sizeof(rawCredentials) / sizeof(rawCredentials[0]);
   for (size_t i = 0; i < rawCredentialCount && count < maxTrackedSSIDs; ++i) {
@@ -364,12 +364,13 @@ void WiFiService::scan_wifi_networks() {
       .scan_type = WIFI_SCAN_TYPE_ACTIVE,
       .scan_time = {.active = {.min = 150, .max = 500}},
       .home_chan_dwell_time = 100,
+      .channel_bitmap=0,
       .coex_background_scan =
           false // a bit more aggressive, might impact bluetooth
   };
   ESP_LOGI(TAG, "trying now start scan:++++++++++++++++++++++");
   ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true)); // true = blocking
-  uint16_t number = 0;
+  uint16_t number = 0xFFFFFFFF; //all channels
   ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&number));
 
   wifi_ap_record_t ap_records[number];

@@ -506,7 +506,11 @@ esp_err_t WiFiService::launch()
                           // aftern network outages and switch to AP mode
                           // initiaizes the event loop
                           // 🔧 Add this line here
-  ESP_ERROR_CHECK(esp_event_loop_create_default());
+  esp_err_t err = esp_event_loop_create_default();
+if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    ESP_LOGE(TAG, "Failed to create default event loop: %s", esp_err_to_name(err));
+    return err;
+}
 
   //  initializes TCP/IP stack
   RETURN_ON_ERROR(esp_netif_init(), TAG, "netif launch failed");

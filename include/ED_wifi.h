@@ -288,7 +288,7 @@ namespace ED_wifi
 
         static esp_err_t launch();
         /**
-         * @brief allows subscription to the funtions to be called when the ESP got an IP
+         * @brief allows function to subscribe to a obtained-IP event and be run
          * @param callback
          */
         static void subscribeToIPReady(std::function<void()> callback);

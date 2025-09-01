@@ -1,4 +1,5 @@
 #include "ED_wifi.h"
+#include "ED_sysstd.h"
 #include "esp_check.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -54,6 +55,7 @@ static const char *TAG = "ED_wifi";
 const WiFiService::APCredential *WiFiService::APCredentialManager::curAP =
     nullptr;
 esp_err_t WiFiService::setHostName() {
+  /*
   esp_err_t qerr;
   ESP_LOGI(TAG, "starting setHostName");
   qerr = esp_wifi_get_mac(WIFI_IF_STA, WiFiService::station_mac.set());
@@ -66,8 +68,9 @@ esp_err_t WiFiService::setHostName() {
            "EDESP_%02X-%02X-%02X", WiFiService::station_mac[3],
            WiFiService::station_mac[4], WiFiService::station_mac[5]);
   ESP_LOGI(TAG, "MAC- Generated ID: %s", WiFiService::station_ID);
-  // if (sta_netif != NULL)
-  {
+  */
+  strcpy(WiFiService::station_ID, ED_sysstd::ESP_std::NetwName());
+  if (sta_netif != NULL) {
     ESP_ERROR_CHECK(esp_netif_set_hostname(sta_netif, WiFiService::station_ID));
     ESP_LOGI(TAG, "Hostname set to: %s", WiFiService::station_ID);
   }
@@ -356,7 +359,7 @@ int WiFiService::APCredential::compare_rssi_desc(const void *a, const void *b) {
 }
 
 void WiFiService::scan_wifi_networks() {
-  ESP_LOGI(TAG,"in scan_wifi_networks");
+  ESP_LOGI(TAG, "in scan_wifi_networks");
   wifi_scan_config_t scan_config = {
       .ssid = NULL,        // Scan all SSIDs
       .bssid = NULL,       // Scan all BSSIDs
@@ -365,13 +368,13 @@ void WiFiService::scan_wifi_networks() {
       .scan_type = WIFI_SCAN_TYPE_ACTIVE,
       .scan_time = {.active = {.min = 150, .max = 500}},
       .home_chan_dwell_time = 100,
-      .channel_bitmap=0,
+      .channel_bitmap = 0,
       .coex_background_scan =
           false // a bit more aggressive, might impact bluetooth
   };
   ESP_LOGI(TAG, "trying now start scan:++++++++++++++++++++++");
   ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true)); // true = blocking
-  uint16_t number = 0; //all channels
+  uint16_t number = 0;                                      // all channels
   ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&number));
 
   wifi_ap_record_t ap_records[number];
@@ -507,10 +510,11 @@ esp_err_t WiFiService::launch()
                           // initiaizes the event loop
                           // 🔧 Add this line here
   esp_err_t err = esp_event_loop_create_default();
-if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-    ESP_LOGE(TAG, "Failed to create default event loop: %s", esp_err_to_name(err));
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    ESP_LOGE(TAG, "Failed to create default event loop: %s",
+             esp_err_to_name(err));
     return err;
-}
+  }
 
   //  initializes TCP/IP stack
   RETURN_ON_ERROR(esp_netif_init(), TAG, "netif launch failed");

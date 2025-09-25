@@ -1,9 +1,12 @@
 #include "ED_wifi.h"
-#include "ED_sysstd.h"
+#include "ED_PC_wrapper.h"
+#include "ED_sys.h"
 #include "esp_check.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include <esp_http_server.h>
+
+// #include "ED_alloc_profiler.h"
 
 // #include <cstring>
 // #include "esp_wifi.h"
@@ -69,7 +72,7 @@ esp_err_t WiFiService::setHostName() {
            WiFiService::station_mac[4], WiFiService::station_mac[5]);
   ESP_LOGI(TAG, "MAC- Generated ID: %s", WiFiService::station_ID);
   */
-  strcpy(WiFiService::station_ID, ED_sysstd::ESP_std::NetwName());
+  strcpy(WiFiService::station_ID, ED_SYS::ESP_std::Device::netwName());
   if (sta_netif != NULL) {
     ESP_ERROR_CHECK(esp_netif_set_hostname(sta_netif, WiFiService::station_ID));
     ESP_LOGI(TAG, "Hostname set to: %s", WiFiService::station_ID);
@@ -278,29 +281,59 @@ TimerHandle_t WiFiService::staRetryDelayed =
                  NULL, reconnectCallback);
 
 void WiFiService::reconnectCallback(TimerHandle_t xTimer) {
+
   esp_wifi_connect();
 }
 
 void WiFiService::event_handler(void *arg, esp_event_base_t event_base,
                                 int32_t event_id, void *event_data) {
+  static int disconnect_count = 0;
+  static int64_t last_disconnect_time = 0;
+
   if (event_base == WIFI_EVENT) {
     switch (event_id) {
     case WIFI_EVENT_STA_START:
       ESP_LOGI(TAG, "STA start completed. Scanning WiFi networks...");
-      // initializes the internal station ID
+      #ifdef DEBUG_BUILD
+      ed_heaptrace_pause(true);
+      #endif
       scan_wifi_networks();
       break;
-    case WIFI_EVENT_SCAN_DONE:
+      case WIFI_EVENT_SCAN_DONE:
       ESP_LOGI(TAG, "SCAN_DONE connecting...");
+      // initializes the internal station ID
       APCredentialManager::setNextActiveAP();
       wifi_conn_STA();
+#ifdef DEBUG_BUILD
+      ed_heaptrace_pause(false);
+#endif
       esp_wifi_connect();
       break;
     case WIFI_EVENT_STA_DISCONNECTED:
+#ifdef DEBUG_BUILD
+      ed_heaptrace_pause(true);
+#endif
       wifi_event_sta_disconnected_t *disconn =
           (wifi_event_sta_disconnected_t *)event_data;
       ESP_LOGW(TAG, "A wifi disconnect event occurred. Reason: {%s}",
                wifi_reason_to_string(disconn->reason));
+      wifi_ap_record_t ap_info;
+      if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        ESP_LOGW(TAG, "Last connected AP: %s, RSSI: %d, Channel: %d",
+                 ap_info.ssid, ap_info.rssi, ap_info.primary);
+      }
+      ESP_LOGW(TAG, "Uptime: %lld sec, Free heap: %u",
+               esp_timer_get_time() / 1000000, esp_get_free_heap_size());
+      esp_netif_dns_info_t dns;
+      if (sta_netif && esp_netif_get_dns_info(sta_netif, ESP_NETIF_DNS_MAIN,
+                                              &dns) == ESP_OK) {
+        ESP_LOGW(TAG, "Current DNS: " IPSTR, IP2STR(&dns.ip.u_addr.ip4));
+      }
+      disconnect_count++;
+      last_disconnect_time = esp_timer_get_time() / 1000000;
+
+      ESP_LOGW(TAG, "Disconnect #%d at %lld sec", disconnect_count,
+               last_disconnect_time);
 
       if (s_retry_num++ < MAX_RETRY) {
         ESP_LOGW(TAG, "Disconnected. Retry #%d with SAME AP %s", s_retry_num,
@@ -340,10 +373,24 @@ void WiFiService::event_handler(void *arg, esp_event_base_t event_base,
       //     break;
     }
   } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+#ifdef DEBUG_BUILD
+    ed_heaptrace_pause(false);
+#endif
     ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-    ESP_LOGI(TAG, "Connected to {%s}, as host{%s} with IP: [" IPSTR "]",
-             APCredentialManager::curAP->ssid, station_ID,
-             IP2STR(&event->ip_info.ip));
+    esp_netif_dns_info_t dns;
+    if (sta_netif &&
+        esp_netif_get_dns_info(sta_netif, ESP_NETIF_DNS_MAIN, &dns) == ESP_OK) {
+      ESP_LOGI(TAG,
+               "Connected to {%s}, as host{%s} with IP: [" IPSTR
+               "], DNS [" IPSTR "]",
+               APCredentialManager::curAP->ssid, station_ID,
+               IP2STR(&event->ip_info.ip), IP2STR(&dns.ip.u_addr.ip4));
+    } else
+      ESP_LOGI(TAG,
+               "Connected to {%s}, as host{%s} with IP: [" IPSTR
+               "], DNS [ error ]",
+               APCredentialManager::curAP->ssid, station_ID,
+               IP2STR(&event->ip_info.ip));
     runGotIPsubscribers();
     s_retry_num = 0;
     if (staRetryTimer != nullptr) {
@@ -372,7 +419,7 @@ void WiFiService::scan_wifi_networks() {
       .coex_background_scan =
           false // a bit more aggressive, might impact bluetooth
   };
-  ESP_LOGI(TAG, "trying now start scan:++++++++++++++++++++++");
+  // ESP_LOGI(TAG, "trying now start scan:++++++++++++++++++++++");
   ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true)); // true = blocking
   uint16_t number = 0;                                      // all channels
   ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&number));
@@ -491,9 +538,7 @@ esp_err_t WiFiService::wifi_conn_STA() {
   return ESP_OK;
 }
 
-esp_err_t WiFiService::launch()
-
-{
+esp_err_t WiFiService::launch() {
 
   esp_err_t ret = nvs_flash_init();
   if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -519,7 +564,6 @@ esp_err_t WiFiService::launch()
   //  initializes TCP/IP stack
   RETURN_ON_ERROR(esp_netif_init(), TAG, "netif launch failed");
 
-  // registers the even handlers
   RETURN_ON_ERROR(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                              &event_handler, NULL),
                   TAG, "event reg failed");
@@ -527,13 +571,19 @@ esp_err_t WiFiService::launch()
                                              &event_handler, NULL),
                   TAG, "IP event reg failed");
   // creates network interfaces
-  sta_netif = esp_netif_create_default_wifi_sta();
-  // Set the hostname on the STA network interface
+  if (!sta_netif) {
+    sta_netif = esp_netif_create_default_wifi_sta();
+  }
 
-  esp_netif_create_default_wifi_ap();
   // initializes Wsifi driver
+
+  esp_wifi_stop();
+  esp_wifi_deinit();
+
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   RETURN_ON_ERROR(esp_wifi_init(&cfg), TAG, "wifi launch failed");
+
+  xTaskCreate(wifi_diag_task, "wifi_diag", 6144, nullptr, 5, nullptr);
 
   setHostName();
   // scans the actual available APs and matches against stored credentials of
@@ -553,6 +603,75 @@ esp_err_t WiFiService::launch()
       return WiFiService::wifi_conn_AP();
       */
   return ESP_OK;
+}
+void WiFiService::wifi_deinit() {
+  // Unregister event handlers using the same function pointer and arg
+  esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler);
+
+  esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler);
+
+  // Stop Wi-Fi
+  esp_wifi_stop();
+
+  // Deinit Wi-Fi driver
+  esp_wifi_deinit();
+
+  // Destroy the netif
+  if (sta_netif) {
+    esp_netif_destroy(sta_netif);
+    sta_netif = nullptr;
+  }
+
+#if CONFIG_LWIP_MDNS_RESPONDER
+  mdns_free();
+#endif
+
+  ESP_LOGI(TAG, "Wi-Fi deinitialized and resources freed");
+}
+
+void WiFiService::wifi_diag_task(void *arg) {
+  // --- INIT SECTION ---
+  // This runs once, right when the task starts.
+  // Perfect place to do a tiny malloc/free to "register" the task
+  // with heap task tracking while heap is still plentiful.
+  ESP_LOGI(TAG, "Step_in wifi_diag_task");
+  void *p = malloc(1);
+  free(p);
+
+  while (true) {
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+      ESP_LOGI("WiFiDiag", "Connected to %s, RSSI: %d, Channel: %d",
+               ap_info.ssid, ap_info.rssi, ap_info.primary);
+    } else {
+      ESP_LOGW("WiFiDiag", "Not connected to any AP");
+    }
+
+    ESP_LOGI("WiFiDiag", "Heap: %u, Uptime: %lld sec", esp_get_free_heap_size(),
+             esp_timer_get_time() / 1000000);
+    static int counter = 0;
+    if (++counter >= 60) { // assuming 1Hz loop
+      ESP_LOGI(TAG, "Step_calling ed_alloc_dump_top");
+      //      ED_alloc_profiler::ed_alloc_dump_top(10);
+      counter = 0;
+    }
+#if 0
+                 // 🔹 Trigger MQTT heap snapshot
+        ED_heap_tracer::mqtt_heap_trace_snapshot_async();
+#endif
+    UBaseType_t hw = uxTaskGetStackHighWaterMark(NULL);
+    ESP_LOGI("WiFiDiag", "Stack HW mark: %u words (~%u bytes)", (unsigned)hw,
+             (unsigned)(hw * sizeof(StackType_t)));
+// 🔹 Pick interval based on mode
+#if 0
+        uint32_t interval_ms =
+            (ED_heap_tracer::get_trace_mode() == ED_heap_tracer::TraceMode::ALL)
+            ? 2000   // churn mode → 2s snapshots
+            : 60000; // leak mode → 60s snapshots
+            vTaskDelay(pdMS_TO_TICKS(interval_ms));
+#endif
+    vTaskDelay(pdMS_TO_TICKS(60000));
+  }
 }
 
 // void WiFiService::setHostname()

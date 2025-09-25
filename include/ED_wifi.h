@@ -19,6 +19,8 @@
 #include <vector>
 #include <functional>
 #include "ED_nvs.h"
+// #include "ED_heap_tracer.h"
+
 
 
 /* The event group allows multiple bits for each event, but we only care about two events:
@@ -294,6 +296,9 @@ namespace ED_wifi
         static void subscribeToIPReady(std::function<void()> callback);
 
     private:
+    // static inline esp_event_handler_instance_t wifi_event_handler_instance = nullptr;
+// esp_event_handler_instance_t ip_event_handler_instance   = nullptr;
+    static void wifi_deinit();
         static std::vector<std::function<void()>> ipReadyCallbacks;      // callback subscribers which need launching on IP ready
         static void                               runGotIPsubscribers(); // processes the list of method which subscribed the IP assigned event.
         static inline esp_netif_t*                sta_netif = nullptr;
@@ -332,6 +337,7 @@ namespace ED_wifi
          * @param xTimer
          */
         static void reconnectCallback(TimerHandle_t xTimer);
+        static void wifi_diag_task(void *arg);
     };
 
 } // end namespace

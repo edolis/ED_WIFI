@@ -72,7 +72,8 @@ esp_err_t WiFiService::setHostName() {
            WiFiService::station_mac[4], WiFiService::station_mac[5]);
   ESP_LOGI(TAG, "MAC- Generated ID: %s", WiFiService::station_ID);
   */
-  strcpy(WiFiService::station_ID, ED_SYS::ESP_std::Device::netwName());
+  strncpy(WiFiService::station_ID, ED_SYS::ESP_std::Device::netwName(), sizeof(WiFiService::station_ID) - 1);
+  WiFiService::station_ID[sizeof(WiFiService::station_ID) - 1] = '\0';
   if (sta_netif != NULL) {
     ESP_ERROR_CHECK(esp_netif_set_hostname(sta_netif, WiFiService::station_ID));
     ESP_LOGI(TAG, "Hostname set to: %s", WiFiService::station_ID);
@@ -214,6 +215,10 @@ void WiFiService::init_sta_retry_timer() {
 
   staRetryTimer = xTimerCreate("STA Retry Timer", retry_interval, pdTRUE,
                                nullptr, sta_retry_callback);
+  if (staRetryTimer == nullptr) {
+    ESP_LOGE(TAG, "Failed to create STA retry timer");
+    return;
+  }
   // xTimerStart(staRetryTimer, 0);
   // the timer will be started by the event manager when needed.
 }
@@ -227,8 +232,9 @@ void WiFiService::init_sta_retry_timer() {
 esp_err_t WiFiService::wifi_conn_AP() {
   ESP_LOGI(TAG, "Switching to AP mode");
   wifi_config_t ap_config = {};
-  strcpy((char *)ap_config.ap.ssid, WiFiService::station_ID);
-  ap_config.ap.ssid_len = strlen(WiFiService::station_ID);
+  strncpy((char *)ap_config.ap.ssid, WiFiService::station_ID, sizeof(ap_config.ap.ssid) - 1);
+  ap_config.ap.ssid[sizeof(ap_config.ap.ssid) - 1] = '\0';
+  ap_config.ap.ssid_len = strlen((char *)ap_config.ap.ssid);
   ap_config.ap.max_connection = 4;
   ap_config.ap.authmode = WIFI_AUTH_OPEN;
 
@@ -276,9 +282,7 @@ const char *WiFiService::wifi_reason_to_string(uint8_t reason) {
   }
 }
 
-TimerHandle_t WiFiService::staRetryDelayed =
-    xTimerCreate("ReconnectTimer", pdMS_TO_TICKS(ReconnectDelay_ms), pdFALSE,
-                 NULL, reconnectCallback);
+TimerHandle_t WiFiService::staRetryDelayed = nullptr;
 
 void WiFiService::reconnectCallback(TimerHandle_t xTimer) {
 
@@ -400,8 +404,11 @@ void WiFiService::event_handler(void *arg, esp_event_base_t event_base,
 }
 
 int WiFiService::APCredential::compare_rssi_desc(const void *a, const void *b) {
-  const APCredential *apA = (const APCredential *)a;
-  const APCredential *apB = (const APCredential *)b;
+  const APCredential *apA = *(const APCredential **)a;
+  const APCredential *apB = *(const APCredential **)b;
+  if (apA == nullptr && apB == nullptr) return 0;
+  if (apA == nullptr) return 1;
+  if (apB == nullptr) return -1;
   return apB->RSSI - apA->RSSI;
 }
 
@@ -443,7 +450,7 @@ void WiFiService::APCredentialManager::updateDetectedAPs(
     char ssid_str[ED_MAX_SSID_PWD_SIZE]; // One extra byte for null terminator
     memcpy(ssid_str, ap_records[i].ssid, ED_MAX_SSID_PWD_SIZE - 1);
 
-    ssid_str[ED_MAX_SSID_PWD_SIZE] = '\0'; // Ensure null-termination
+    ssid_str[ED_MAX_SSID_PWD_SIZE - 1] = '\0'; // Ensure null-termination
     ESP_LOGI(TAG, "processing {%s} rssi %d", ssid_str, ap_records[i].rssi);
     for (int j = 0; j < WiFiService::APCredentialManager::maxTrackedSSIDs;
          ++j) {
@@ -462,7 +469,7 @@ void WiFiService::APCredentialManager::updateDetectedAPs(
   }
   activeSSIDs[filtered_count] = nullptr; // terminates the list with nullpt
   // ESP_LOGI(TAG,"updateDetectedAPs matches %d APs",count);
-  qsort(activeSSIDs, filtered_count, sizeof(APCredential),
+  qsort(activeSSIDs, filtered_count, sizeof(const APCredential*),
         APCredential::compare_rssi_desc);
 }
 
@@ -511,9 +518,17 @@ esp_err_t WiFiService::wifi_conn_STA() {
   ESP_LOGI(TAG, "Initializing WiFi in mode: STA, curAP is %s null ",
            APCredentialManager::curAP == nullptr ? "" : "not");
 
+  // Safety check: ensure curAP is valid before accessing
+  if (APCredentialManager::curAP == nullptr) {
+    ESP_LOGE(TAG, "No active AP configured, cannot connect in STA mode");
+    return ESP_ERR_INVALID_STATE;
+  }
+
   wifi_config_t sta_config = {};
-  strcpy((char *)sta_config.sta.ssid, APCredentialManager::curAP->ssid);
-  strcpy((char *)sta_config.sta.password, APCredentialManager::curAP->password);
+  strncpy((char *)sta_config.sta.ssid, APCredentialManager::curAP->ssid, sizeof(sta_config.sta.ssid) - 1);
+  sta_config.sta.ssid[sizeof(sta_config.sta.ssid) - 1] = '\0';
+  strncpy((char *)sta_config.sta.password, APCredentialManager::curAP->password, sizeof(sta_config.sta.password) - 1);
+  sta_config.sta.password[sizeof(sta_config.sta.password) - 1] = '\0';
 #ifdef DEBUG_BUILD
   sta_config.sta.failure_retry_cnt =
       20; //< Number of connection retries station will do before moving to next
@@ -583,6 +598,15 @@ esp_err_t WiFiService::launch() {
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   RETURN_ON_ERROR(esp_wifi_init(&cfg), TAG, "wifi launch failed");
 
+  // Initialize the reconnect timer after WiFi is initialized
+  if (staRetryDelayed == nullptr) {
+    staRetryDelayed = xTimerCreate("ReconnectTimer", pdMS_TO_TICKS(ReconnectDelay_ms),
+                                   pdFALSE, NULL, reconnectCallback);
+    if (staRetryDelayed == nullptr) {
+      ESP_LOGE(TAG, "Failed to create reconnect timer");
+    }
+  }
+
   xTaskCreate(wifi_diag_task, "wifi_diag", 6144, nullptr, 5, nullptr);
 
   setHostName();
@@ -605,6 +629,19 @@ esp_err_t WiFiService::launch() {
   return ESP_OK;
 }
 void WiFiService::wifi_deinit() {
+  // Stop and delete timers
+  if (staRetryTimer != nullptr) {
+    xTimerStop(staRetryTimer, portMAX_DELAY);
+    xTimerDelete(staRetryTimer, portMAX_DELAY);
+    staRetryTimer = nullptr;
+  }
+
+  if (staRetryDelayed != nullptr) {
+    xTimerStop(staRetryDelayed, portMAX_DELAY);
+    xTimerDelete(staRetryDelayed, portMAX_DELAY);
+    staRetryDelayed = nullptr;
+  }
+
   // Unregister event handlers using the same function pointer and arg
   esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler);
 
@@ -741,9 +778,9 @@ Password: <input type="password" name="password"><br>
 }
 
 esp_err_t WiFiService::WebInterfaace::set_ap_post_handler(httpd_req_t *req) {
-  // Buffer to hold incoming POST data
-  char buf[100];
-  int ret = httpd_req_recv(req, buf, sizeof(buf));
+  // Buffer to hold incoming POST data - increased size for safety
+  char buf[512];
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -756,10 +793,12 @@ esp_err_t WiFiService::WebInterfaace::set_ap_post_handler(httpd_req_t *req) {
   char password[ED_MAX_SSID_PWD_SIZE] = {0};
 
   // Simple parsing (assumes format: ssid=MySSID&password=MyPass)
-  sscanf(buf, "ssid=%31[^&]&password=%63s", ssid, password);
+  // Use width specifiers to prevent buffer overflow (ED_MAX_SSID_PWD_SIZE is 19, so max 18 chars + null)
+  sscanf(buf, "ssid=%18[^&]&password=%18s", ssid, password);
 
   ESP_LOGI("AP_CONFIG", "Received SSID: %s", ssid);
-  ESP_LOGI("AP_CONFIG", "Received Password: %s", password);
+  // Do NOT log password in production - security risk
+  // ESP_LOGI("AP_CONFIG", "Received Password: %s", password);
 
   APCredentialManager::addOrUpdate(ssid, password, true);
   // Save to NVS

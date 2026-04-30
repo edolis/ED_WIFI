@@ -1,0 +1,1 @@
+https://peterneufeld.wordpress.com/2025/05/11/esp32-s3-zero-antenna-modification/

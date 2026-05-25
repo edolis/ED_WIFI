@@ -75,6 +75,13 @@ private:
 
 class WiFiService {
 public:
+
+/**
+ * @brief Forces a full reconnection of WiFi: stops current connection, clears retry counters,
+ * and restarts STA mode to reconnect to the best available AP.
+ */
+static void forceReconnect();
+
   struct CurrentAPInfo {
     char ssid[ED_MAX_SSID_PWD_SIZE];
     int8_t rssi;

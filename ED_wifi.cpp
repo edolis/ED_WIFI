@@ -328,8 +328,9 @@ void WiFiService::event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGW(TAG, "Last connected AP: %s, RSSI: %d, Channel: %d",
                  ap_info.ssid, ap_info.rssi, ap_info.primary);
       }
-      ESP_LOGW(TAG, "Uptime: %lld sec, Free heap: %u",
-               esp_timer_get_time() / 1000000, esp_get_free_heap_size());
+      ESP_LOGW(TAG, "Uptime: %u sec (low 32 bits), Free heap: %u",
+               (uint32_t)(esp_timer_get_time() / 1000000),
+               esp_get_free_heap_size());
       esp_netif_dns_info_t dns;
       if (sta_netif && esp_netif_get_dns_info(sta_netif, ESP_NETIF_DNS_MAIN,
                                               &dns) == ESP_OK) {
@@ -338,8 +339,9 @@ void WiFiService::event_handler(void *arg, esp_event_base_t event_base,
       disconnect_count++;
       last_disconnect_time = esp_timer_get_time() / 1000000;
 
-      ESP_LOGW(TAG, "Disconnect #%d at %lld sec", disconnect_count,
-               last_disconnect_time);
+      // Convert to seconds, then keep low 32 bits
+      ESP_LOGW(TAG, "Disconnect #%d at %u sec (low 32 bits)", disconnect_count,
+               (uint32_t)(last_disconnect_time / 1000000));
 
       if (s_retry_num++ < MAX_RETRY) {
         ESP_LOGW(TAG, "Disconnected. Retry #%d with SAME AP %s", s_retry_num,
@@ -692,8 +694,9 @@ void WiFiService::wifi_diag_task(void *arg) {
       ESP_LOGW("WiFiDiag", "Not connected to any AP");
     }
 
-    ESP_LOGI("WiFiDiag", "Heap: %u, Uptime: %lld sec", esp_get_free_heap_size(),
-             esp_timer_get_time() / 1000000);
+    ESP_LOGI("WiFiDiag", "Heap: %u, Uptime: %u sec (low 32 bits)",
+             esp_get_free_heap_size(),
+             (uint32_t)(esp_timer_get_time() / 1000000));
     static int counter = 0;
     if (++counter >= 60) { // assuming 1Hz loop
       ESP_LOGI(TAG, "Step_calling ed_alloc_dump_top");
@@ -995,4 +998,42 @@ std::optional<WiFiService::CurrentAPInfo> WiFiService::getCurrentAPInfo() {
   }
   return std::nullopt;
 }
+
+void WiFiService::forceReconnect() {
+  ESP_LOGW(TAG, "forceReconnect() called – forcing WiFi reconnection");
+
+  // Stop any pending retry timers
+  if (staRetryTimer) {
+    xTimerStop(staRetryTimer, 0);
+  }
+  if (staRetryDelayed) {
+    xTimerStop(staRetryDelayed, 0);
+  }
+
+  // Reset retry counters
+  s_retry_num = 0;
+
+  // If currently in AP mode, switch back to STA mode
+  wifi_mode_t mode;
+  esp_wifi_get_mode(&mode);
+  if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) {
+    ESP_LOGI(TAG, "Currently in AP mode, switching to STA");
+    esp_wifi_stop();
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_start();
+  } else {
+    // Already in STA mode – disconnect and reconnect
+    esp_wifi_disconnect();
+  }
+
+  // Force a new scan and connection attempt
+  // The event handler will trigger scan on WIFI_EVENT_STA_START, but since we
+  // might not have stopped the interface, we need to ensure a fresh start.
+  // Simplest: stop and restart STA
+  esp_wifi_stop();
+  esp_wifi_set_mode(WIFI_MODE_STA);
+  esp_wifi_start(); // This will generate WIFI_EVENT_STA_START and then
+                    // SCAN_DONE
+}
+
 } // namespace ED_wifi
